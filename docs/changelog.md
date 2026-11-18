@@ -10,7 +10,7 @@ cargo install inauguration
 ./install.sh
 ```
 
-Prebuilt tarballs (Linux x86_64, macOS aarch64) and SHA-256 sidecars: [GitHub Releases](https://github.com/tschk/inauguration/releases).
+Prebuilt tarballs (Linux x86_64, macOS aarch64) and SHA-256 sidecars: [GitHub Releases](https://github.com/softwarecorporation/inauguration/releases).
 
 This page is written for humans and coding agents. Each version lists *why it mattered*, not every commit. Git history remains authoritative for drive-by tests and refactors.
 

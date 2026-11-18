@@ -29,7 +29,7 @@ const unocss = await readFile(
 );
 const notFound = await readFile(join(outDir, "404.html"), "utf8");
 
-test("homepage is moonshine landing HTML with tschk GitHub links", () => {
+test("homepage is moonshine landing HTML with softwarecorporation GitHub links", () => {
   expect(homepage).toContain("<!DOCTYPE html>");
   expect(homepage).toContain('<html lang="en">');
   expect(homepage).toContain('<meta charset="utf-8">');
@@ -45,7 +45,7 @@ test("homepage is moonshine landing HTML with tschk GitHub links", () => {
     "THE STACK: INLANG + CREPUSCULARITYUltrafast compiler pipeline",
   );
   expect(homepage).toContain("flex-1 max-w-2xl flex flex-col");
-  expect(homepage).toContain("https://github.com/tschk/inauguration");
+  expect(homepage).toContain("https://github.com/softwarecorporation/inauguration");
   expect(homepage).not.toContain(
     "https://github.com/semitechnological/inauguration",
   );

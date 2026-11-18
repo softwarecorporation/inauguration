@@ -36,7 +36,7 @@ test("GET / returns 200 HTML with page content", async () => {
   );
   expect(html).toContain("PIPELINE CAPABILITIES");
   expect(html).toContain("DOCUMENTATION DIRECTORY");
-  expect(html).toContain("https://github.com/tschk/inauguration");
+  expect(html).toContain("https://github.com/softwarecorporation/inauguration");
   expect(html).not.toContain(
     "https://github.com/semitechnological/inauguration",
   );

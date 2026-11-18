@@ -15,7 +15,7 @@ div min-h-screen bg-zinc-950 text-zinc-300 p-6 sm:p-12 text-sm leading-relaxed i
 					"Docs"
 				a href="./docs/changelog.html" no-underline text-zinc-400 hover:text-white transition-colors
 					"Changelog"
-				a href="https://github.com/tschk/inauguration" no-underline text-zinc-400 hover:text-white transition-colors rel="noopener noreferrer" target="_blank"
+				a href="https://github.com/softwarecorporation/inauguration" no-underline text-zinc-400 hover:text-white transition-colors rel="noopener noreferrer" target="_blank"
 					"GitHub"
 				a href="https://crates.io/crates/inauguration" no-underline text-zinc-400 hover:text-white transition-colors rel="noopener noreferrer" target="_blank"
 					"Crates.io"
@@ -38,7 +38,7 @@ div min-h-screen bg-zinc-950 text-zinc-300 p-6 sm:p-12 text-sm leading-relaxed i
 				div flex gap-3
 					a href="./docs/in-language.html" no-underline inline-flex items-center px-4 py-2 bg-zinc-100 text-zinc-950 hover:bg-white text-xs font-semibold rounded transition-colors
 						"Get Started"
-					a href="https://github.com/tschk/inauguration" no-underline inline-flex items-center px-4 py-2 border border-zinc-800 hover:bg-zinc-900 text-zinc-300 hover:text-white text-xs font-semibold rounded transition-colors
+					a href="https://github.com/softwarecorporation/inauguration" no-underline inline-flex items-center px-4 py-2 border border-zinc-800 hover:bg-zinc-900 text-zinc-300 hover:text-white text-xs font-semibold rounded transition-colors
 						"View GitHub"
 			
 			# Terminal preview
@@ -222,7 +222,7 @@ div min-h-screen bg-zinc-950 text-zinc-300 p-6 sm:p-12 text-sm leading-relaxed i
 				span
 					"inauguration docs-site · built with crepuscularity + moonshine"
 			div flex gap-4
-				a href="https://github.com/tschk/inauguration" no-underline text-zinc-500 hover:text-zinc-300 transition-colors rel="noopener noreferrer" target="_blank"
+				a href="https://github.com/softwarecorporation/inauguration" no-underline text-zinc-500 hover:text-zinc-300 transition-colors rel="noopener noreferrer" target="_blank"
 					"GitHub"
 				a href="https://crates.io/crates/inauguration" no-underline text-zinc-500 hover:text-zinc-300 transition-colors rel="noopener noreferrer" target="_blank"
 					"Crates.io"

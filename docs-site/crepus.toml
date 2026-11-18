@@ -130,7 +130,7 @@ base_url = "https://inauguration.tsc.hk"
 title = "inauguration"
 description = "Compiler toolchain: inlang (.in), Core IR, native JIT, polyglot Tree-sitter fronts."
 sources = [
-  { path = "../README.md", href = "https://github.com/tschk/inauguration/blob/master/README.md", title = "Repository README" },
+  { path = "../README.md", href = "https://github.com/softwarecorporation/inauguration/blob/master/README.md", title = "Repository README" },
   { path = "../docs/README.md", href = "https://inauguration.tsc.hk/docs/README.html", title = "Documentation overview" },
   { path = "../docs/in-language.md", href = "https://inauguration.tsc.hk/docs/in-language.html", title = "inlang (.in)" },
   { path = "../docs/general-compiler.md", href = "https://inauguration.tsc.hk/docs/general-compiler.html", title = "General compiler" },
