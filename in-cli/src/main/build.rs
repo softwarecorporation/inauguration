@@ -219,6 +219,9 @@ fn run_pipeline_for_path(
 ) -> Result<()> {
     let source_path = resolve_source_path(path)?;
     let is_rust = source_path.extension().is_some_and(|e| e == "rs");
+    let entry = (source_path.file_name().and_then(|name| name.to_str())
+        != Some(inauguration::foreign_stage::FOREIGN_STAGE_FILE))
+    .then(|| "main".to_string());
 
     if let Some(out_path_str) = out {
         let out_path = if Path::new(&out_path_str).is_absolute() {
@@ -247,7 +250,7 @@ fn run_pipeline_for_path(
             module_id: module_id.to_string(),
             parser,
             target: CompileTarget::Native,
-            entry: Some("main".to_string()),
+            entry: entry.clone(),
             out: Some(out_path.clone()),
             linkage: inauguration::native_emit::NativeLinkage::Executable,
             target_triple: None,
@@ -287,7 +290,7 @@ fn run_pipeline_for_path(
             module_id: module_id.to_string(),
             parser,
             target: CompileTarget::Jit,
-            entry: Some("main".to_string()),
+            entry: entry.clone(),
             out: None,
             linkage: inauguration::native_emit::NativeLinkage::Executable,
             target_triple: None,
@@ -322,7 +325,7 @@ fn run_pipeline_for_path(
         module_id: module_id.to_string(),
         parser,
         target: CompileTarget::Jit,
-        entry: Some("main".to_string()),
+        entry,
         out: None,
         linkage: inauguration::native_emit::NativeLinkage::Executable,
         target_triple: None,
