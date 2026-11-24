@@ -399,11 +399,21 @@ pub(super) fn compile_jit_with_execution_state(
     let (exit_code, eval_result) = if compile_only {
         (None, None)
     } else {
+        crate::package_runtime::take_invocation_error();
         *execution_started = true;
         let raw = unsafe { rt.invoke(&resolved_entry, &[]) }.ok_or_else(|| {
             format!("jit-invocation-failed: entry `{resolved_entry}` could not be invoked")
         })?;
         if let Some(value) = rt.invocation_error() {
+            let value = if rt.invocation_error_type()
+                == crate::core_effects::error_type_tag(&crate::core_ir::Typ::String)
+            {
+                decode_jit_string(value).ok_or_else(|| {
+                    format!("jit-string-error-invalid: entry `{resolved_entry}` threw an invalid string reference")
+                })?
+            } else {
+                value.to_string()
+            };
             return Err(format!(
                 "jit-uncaught-error: entry `{resolved_entry}` threw {value}"
             ));

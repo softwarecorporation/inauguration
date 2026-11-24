@@ -722,6 +722,11 @@ impl JitRuntime {
         unsafe { (page.ptr.read() != 0).then(|| page.ptr.add(8).cast::<i64>().read()) }
     }
 
+    pub(crate) fn invocation_error_type(&self) -> Option<i64> {
+        let page = self.error_page.as_ref()?;
+        unsafe { (page.ptr.read() != 0).then(|| page.ptr.add(16).cast::<i64>().read()) }
+    }
+
     /// Returns the number of loaded functions.
     pub fn function_count(&self) -> usize {
         self.functions.read().unwrap().len()

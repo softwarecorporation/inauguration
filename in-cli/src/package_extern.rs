@@ -161,12 +161,14 @@ fn bindings_for_dependency(
     metadata
         .bindings
         .iter()
-        .map(|binding| InExternBinding {
-            language: extern_language_for_ecosystem(&metadata.ecosystem).to_string(),
-            name: binding.symbol.clone(),
-            params: vec![],
-            required_capabilities: vec!["package.invoke".into()],
-            ret: crate::package_runtime::binding_return_type(binding),
+        .filter_map(|binding| {
+            Some(InExternBinding {
+                language: extern_language_for_ecosystem(&metadata.ecosystem).to_string(),
+                name: binding.symbol.clone(),
+                params: crate::package_runtime::binding_params(binding)?,
+                required_capabilities: vec!["package.invoke".into()],
+                ret: crate::package_runtime::binding_return_type(binding),
+            })
         })
         .collect()
 }

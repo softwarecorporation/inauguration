@@ -311,6 +311,26 @@ fn register_misc_funcs<S: std::hash::BuildHasher>(
     c: &mut std::collections::HashMap<String, NativePtr, S>,
 ) {
     c.insert(
+        crate::package_runtime::STRING_INVOKE.into(),
+        NativePtr(crate::native_stdlib::in_package_invoke_string as *const u8),
+    );
+    c.insert(
+        crate::package_runtime::STRING_QUOTE.into(),
+        NativePtr(crate::native_stdlib::in_json_stringify as *const u8),
+    );
+    c.insert(
+        crate::package_runtime::STRING_CONCAT.into(),
+        NativePtr(crate::native_stdlib::in_str_concat as *const u8),
+    );
+    c.insert(
+        crate::package_runtime::INVOCATION_FAILED.into(),
+        NativePtr(crate::package_runtime::invocation_failed as *const u8),
+    );
+    c.insert(
+        crate::package_runtime::INVOCATION_ERROR.into(),
+        NativePtr(crate::native_stdlib::in_package_invocation_error as *const u8),
+    );
+    c.insert(
         "in_process_run".to_string(),
         NativePtr(crate::native_stdlib::in_process_run as *const u8),
     );

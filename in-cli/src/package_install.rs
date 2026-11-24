@@ -26,6 +26,8 @@ pub struct PackageInvokeSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageExportBinding {
     pub symbol: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<String>,
     pub returns: String,
     pub invoke: PackageInvokeSpec,
 }

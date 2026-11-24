@@ -2,6 +2,26 @@
 use crate::core_ir::Typ;
 
 const WRAPPERS: &[(&str, &str)] = &[
+    (
+        crate::package_runtime::STRING_INVOKE,
+        crate::package_runtime::STRING_INVOKE,
+    ),
+    (
+        crate::package_runtime::STRING_QUOTE,
+        crate::package_runtime::STRING_QUOTE,
+    ),
+    (
+        crate::package_runtime::STRING_CONCAT,
+        crate::package_runtime::STRING_CONCAT,
+    ),
+    (
+        crate::package_runtime::INVOCATION_FAILED,
+        crate::package_runtime::INVOCATION_FAILED,
+    ),
+    (
+        crate::package_runtime::INVOCATION_ERROR,
+        crate::package_runtime::INVOCATION_ERROR,
+    ),
     ("join", "in_vec_join"),
     ("chain", "in_vec_extend"),
     ("extend", "in_vec_extend"),

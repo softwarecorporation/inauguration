@@ -16,6 +16,8 @@ pub struct PackageAdapterFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageAdapterExport {
     pub symbol: String,
+    #[serde(default)]
+    pub params: Vec<String>,
     pub returns: String,
     pub invoke: PackageInvokeSpec,
 }
@@ -37,6 +39,7 @@ pub fn discover_installed_package(
             .into_iter()
             .map(|export| PackageExportBinding {
                 symbol: export.symbol,
+                params: export.params,
                 returns: export.returns,
                 invoke: export.invoke,
             })
@@ -81,17 +84,95 @@ fn discover_npm_package(
         return Ok(vec![fallback_binding(package_ref)]);
     }
     let symbol = format!("{}_greet", sanitize_symbol_component(&package_ref.name));
+    let arity = npm_greeting_arity(&install_path.join("index.js"))?;
     Ok(vec![PackageExportBinding {
         symbol,
+        params: vec!["string".into(); arity],
         returns: "string".to_string(),
         invoke: PackageInvokeSpec {
             program: "node".to_string(),
             args: vec![
                 "-e".to_string(),
-                "const m=require('./index.js'); process.stdout.write(m.greet());".to_string(),
+                if arity == 0 {
+                    "const m=require('./index.js'); process.stdout.write(m.greet());".into()
+                } else {
+                    "const m=require('./index.js'); process.stdout.write(m.greet(...JSON.parse(process.argv[1])));".into()
+                },
             ],
         },
     }])
+}
+
+// The existing greeting adapter exposes strings. Discover its required arity
+// without executing package code during installation; richer exports use an adapter file.
+fn npm_greeting_arity(path: &Path) -> Result<usize, String> {
+    let Ok(source) = fs::read_to_string(path) else {
+        return Ok(0);
+    };
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_javascript::LANGUAGE.into())
+        .map_err(|err| format!("initialize npm adapter parser: {err}"))?;
+    let tree = parser
+        .parse(&source, None)
+        .ok_or_else(|| "parse npm adapter source".to_string())?;
+    if tree.root_node().has_error() {
+        return Err(format!(
+            "invalid JavaScript adapter source {}",
+            path.display()
+        ));
+    }
+    let mut arity = None;
+    let mut cursor = tree.root_node().walk();
+    for statement in tree.root_node().named_children(&mut cursor) {
+        let Some(assignment) = statement.named_child(0) else {
+            continue;
+        };
+        if assignment.kind() != "assignment_expression" {
+            continue;
+        }
+        let Some(left) = assignment.child_by_field_name("left") else {
+            continue;
+        };
+        let export = left
+            .utf8_text(source.as_bytes())
+            .unwrap_or_default()
+            .split_whitespace()
+            .collect::<String>();
+        if !matches!(export.as_str(), "exports.greet" | "module.exports.greet") {
+            continue;
+        }
+        let function = assignment
+            .child_by_field_name("right")
+            .ok_or_else(|| "npm greeting export has no function".to_string())?;
+        if !matches!(function.kind(), "arrow_function" | "function_expression") || arity.is_some() {
+            return Ok(0);
+        }
+        if function.child_by_field_name("parameter").is_some() {
+            arity = Some(1);
+        } else if let Some(parameters) = function.child_by_field_name("parameters") {
+            let mut cursor = parameters.walk();
+            let parameters: Vec<_> = parameters
+                .named_children(&mut cursor)
+                .filter(|parameter| parameter.kind() != "comment")
+                .collect();
+            arity = Some(
+                if parameters
+                    .iter()
+                    .any(|parameter| parameter.kind() != "identifier")
+                {
+                    // Preserve the legacy zero-argument adapter when richer
+                    // parameter contracts cannot be inferred without execution.
+                    0
+                } else {
+                    parameters.len()
+                },
+            );
+        } else {
+            return Ok(0);
+        }
+    }
+    Ok(arity.unwrap_or(0))
 }
 
 fn discover_pypi_package(
@@ -105,6 +186,7 @@ fn discover_pypi_package(
     let symbol = format!("{}_greet", sanitize_symbol_component(&package_ref.name));
     Ok(vec![PackageExportBinding {
         symbol,
+        params: Vec::new(),
         returns: "string".to_string(),
         invoke: PackageInvokeSpec {
             program: "python3".to_string(),
@@ -127,6 +209,7 @@ fn discover_cargo_package(
     let symbol = format!("{}_greet", sanitize_symbol_component(&package_ref.name));
     Ok(vec![PackageExportBinding {
         symbol,
+        params: Vec::new(),
         returns: "string".to_string(),
         invoke: PackageInvokeSpec {
             program: "cargo".to_string(),
@@ -151,6 +234,7 @@ fn discover_go_package(
     let symbol = format!("{}_greet", sanitize_symbol_component(&package_ref.name));
     Ok(vec![PackageExportBinding {
         symbol,
+        params: Vec::new(),
         returns: "string".to_string(),
         invoke: PackageInvokeSpec {
             program: "go".to_string(),
@@ -162,6 +246,7 @@ fn discover_go_package(
 fn fallback_binding(package_ref: &PackageRef) -> PackageExportBinding {
     PackageExportBinding {
         symbol: crate::package_install::export_symbol_for(package_ref),
+        params: Vec::new(),
         returns: "void".to_string(),
         invoke: PackageInvokeSpec {
             program: "true".to_string(),

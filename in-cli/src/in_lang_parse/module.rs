@@ -24,6 +24,7 @@ struct ParsedInModule {
     module: UnifiedModule,
     pending_globals: HashSet<String>,
     empty_brace_fns: HashSet<String>,
+    string_adapter: bool,
 }
 
 fn parse_module_from_blocks<'a>(
@@ -187,6 +188,7 @@ fn parse_module_from_blocks<'a>(
         module: UnifiedModule::new(decls),
         pending_globals,
         empty_brace_fns,
+        string_adapter: false,
     })
 }
 
@@ -223,6 +225,7 @@ fn parse_in_module_from_items(
         mut module,
         pending_globals,
         empty_brace_fns,
+        mut string_adapter,
     } = parse_module_from_blocks(
         items.iter().filter(|(_, text)| is_core_decl_item(text)),
         counts,
@@ -244,16 +247,34 @@ fn parse_in_module_from_items(
             crate::package_lock::load_package_lock(&lock_root.lock_path).ok()
         });
         for import in &surface.semantic_imports {
-            std_decls.extend(
-                crate::package_extern::package_import_bindings_for_semantic_import(
-                    import,
-                    &root.root,
-                    &manifest,
-                    lock.as_ref(),
-                )
-                .into_iter()
-                .map(|binding| binding_decl(&binding)),
+            let resolved = crate::package_manifest::resolve_semantic_imports(
+                std::slice::from_ref(import),
+                Some(&manifest),
             );
+            let mut imported_manifest = manifest.clone();
+            imported_manifest.dependencies.retain(|key, _| {
+                resolved
+                    .iter()
+                    .any(|item| item.dependency.as_ref() == Some(key))
+            });
+            let runtimes = crate::package_runtime::collect_package_exports_for_manifest(
+                &root.root,
+                &imported_manifest,
+                lock.as_ref(),
+            );
+            for binding in crate::package_extern::package_import_bindings_for_semantic_import(
+                import,
+                &root.root,
+                &manifest,
+                lock.as_ref(),
+            ) {
+                let mut declaration = binding_decl(&binding);
+                if let Some(runtime) = runtimes.get(&binding.name) {
+                    string_adapter |=
+                        crate::package_runtime::lower_string_adapter(&mut declaration, runtime)?;
+                }
+                std_decls.push(declaration);
+            }
         }
     }
     for binding in &surface.semantic_bindings {
@@ -271,6 +292,7 @@ fn parse_in_module_from_items(
         module,
         pending_globals,
         empty_brace_fns,
+        string_adapter,
     })
 }
 
@@ -280,7 +302,13 @@ fn finalize_in_module(parsed: ParsedInModule, require_main: bool) -> Result<Unif
         mut module,
         mut pending_globals,
         empty_brace_fns,
+        string_adapter,
     } = parsed;
+    if string_adapter {
+        module
+            .decls
+            .extend(crate::package_runtime::string_adapter_builtins());
+    }
     if module
         .decls
         .iter()
@@ -576,6 +604,7 @@ fn parse_in_file_with_imports(path: &Path) -> Result<ParsedInModule, String> {
     let mut decls = Vec::new();
     let mut pending_globals = HashSet::new();
     let mut empty_brace_fns = HashSet::new();
+    let mut string_adapter = false;
     for parsed in files
         .into_iter()
         .map(|(_, parsed)| parsed)
@@ -584,11 +613,13 @@ fn parse_in_file_with_imports(path: &Path) -> Result<ParsedInModule, String> {
         decls.extend(parsed.module.decls);
         pending_globals.extend(parsed.pending_globals);
         empty_brace_fns.extend(parsed.empty_brace_fns);
+        string_adapter |= parsed.string_adapter;
     }
     Ok(ParsedInModule {
         module: UnifiedModule::with_identity(decls, identity),
         pending_globals,
         empty_brace_fns,
+        string_adapter,
     })
 }
 
