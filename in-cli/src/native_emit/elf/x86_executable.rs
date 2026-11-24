@@ -58,6 +58,9 @@ fn lower_executable(
         let code = match symbol.as_str() {
             "malloc" => linux_malloc(),
             crate::inrt::INRT_STR_CONCAT => linux_str_concat(),
+            "print" => linux_print_string(false),
+            crate::inrt::INRT_PRINT => linux_print_string(true),
+            "print-int" | "print_int" | crate::inrt::INRT_PRINT_INT => linux_print_int(),
             // SysV memcpy returns its original destination and clears DF.
             "memcpy" => vec![0x48, 0x89, 0xf8, 0x48, 0x89, 0xd1, 0xfc, 0xf3, 0xa4, 0xc3],
             "abort" => vec![
@@ -218,6 +221,172 @@ fn linux_malloc() -> Vec<u8> {
         0x0f, 0x05, 0x48, 0x3d, 0x01, 0xf0, 0xff, 0xff, 0x72, 2, 0x31, 0xc0, 0xc3,
     ]);
     code
+}
+
+fn linux_print_string(raw: bool) -> Vec<u8> {
+    use crate::native_emit::x86_64::{self as x, CodeEmitter};
+    let mut e = CodeEmitter::new();
+    let mut done = Vec::new();
+    e.emit_insns(&x::test_rr(x::RDI, x::RDI));
+    done.push(e.len());
+    e.emit_insns(&x::jcc_near(4, 0));
+    e.emit_insns(&x::mov_rr(x::RAX, x::RDI));
+    e.emit_insns(&x::load_i64(x::RCX, 7));
+    e.emit_insns(&x::and_rr(x::RAX, x::RCX));
+    done.push(e.len());
+    e.emit_insns(&x::jcc_near(5, 0));
+    e.emit_insns(&x::mov_r_m(x::RDX, x::RDI, 0));
+    // Ordinary print matches in_print's cap and UTF-8 policy; raw runtime print
+    // preserves arbitrary bytes, matching in_jit_print_bytes.
+    e.emit_insns(&x::load_i64(
+        x::RAX,
+        if raw { i64::MAX } else { 64 * 1024 * 1024 },
+    ));
+    e.emit_insns(&x::cmp_rr(x::RDX, x::RAX));
+    done.push(e.len());
+    e.emit_insns(&x::jcc_near(7, 0)); // above
+    e.emit_insns(&x::mov_rr(x::RSI, x::RDI));
+    e.emit_insns(&x::add_rmi8(x::RSI, 8));
+    done.push(e.len());
+    e.emit_insns(&x::jcc_near(2, 0)); // pointer overflow
+    e.emit_insns(&x::mov_rr(x::R9, x::RSI));
+    e.emit_insns(&x::add_rr(x::R9, x::RDX));
+    done.push(e.len());
+    e.emit_insns(&x::jcc_near(2, 0));
+    e.emit_insns(&x::test_rr(x::RDX, x::RDX));
+    done.push(e.len());
+    e.emit_insns(&x::jcc_near(4, 0));
+    if !raw {
+        e.emit_insns(&x::mov_rr(x::R8, x::RSI));
+        e.emit_insns(&x::zero_reg(x::RCX)); // remaining continuation bytes
+        let scan = e.len();
+        e.emit_insns(&x::movzx_m8(x::RAX, x::R8));
+        e.emit_insns(&x::add_rmi8(x::R8, 1));
+        e.emit_insns(&x::test_rr(x::RCX, x::RCX));
+        let continuation = e.len();
+        e.emit_insns(&x::jcc_near(5, 0));
+        let mut next_byte = Vec::new();
+        e.emit_insns(&x::cmp_rmi32(x::RAX, 0x80));
+        next_byte.push(e.len());
+        e.emit_insns(&x::jcc_near(2, 0)); // ASCII, including NUL
+        e.emit_insns(&x::load_i64(x::RCX, 1));
+        e.emit_insns(&x::load_i64(x::R10, 0x80));
+        e.emit_insns(&x::load_i64(x::R11, 0xbf));
+        e.emit_insns(&x::cmp_rmi32(x::RAX, 0xc2));
+        done.push(e.len());
+        e.emit_insns(&x::jcc_near(2, 0)); // stray continuation or overlong leader
+        e.emit_insns(&x::cmp_rmi32(x::RAX, 0xdf));
+        next_byte.push(e.len());
+        e.emit_insns(&x::jcc_near(6, 0));
+        e.emit_insns(&x::load_i64(x::RCX, 2));
+        // Exclude overlong 3/4-byte encodings, surrogates and > U+10FFFF.
+        for (leader, register, limit) in [(0xe0, x::R10, 0xa0), (0xed, x::R11, 0x9f)] {
+            e.emit_insns(&x::cmp_rmi32(x::RAX, leader));
+            let other = e.len();
+            e.emit_insns(&x::jcc_near(5, 0));
+            e.emit_insns(&x::load_i64(register, limit));
+            e.patch_u32(other + 2, e.len() - other - 6);
+        }
+        e.emit_insns(&x::cmp_rmi32(x::RAX, 0xef));
+        next_byte.push(e.len());
+        e.emit_insns(&x::jcc_near(6, 0));
+        e.emit_insns(&x::load_i64(x::RCX, 3));
+        e.emit_insns(&x::cmp_rmi32(x::RAX, 0xf4));
+        done.push(e.len());
+        e.emit_insns(&x::jcc_near(7, 0));
+        for (leader, register, limit) in [(0xf0, x::R10, 0x90), (0xf4, x::R11, 0x8f)] {
+            e.emit_insns(&x::cmp_rmi32(x::RAX, leader));
+            let other = e.len();
+            e.emit_insns(&x::jcc_near(5, 0));
+            e.emit_insns(&x::load_i64(register, limit));
+            e.patch_u32(other + 2, e.len() - other - 6);
+        }
+        let leader_done = e.len();
+        e.emit_insns(&x::jmp_rel32(0));
+        e.patch_u32(continuation + 2, e.len() - continuation - 6);
+        e.emit_insns(&x::cmp_rr(x::RAX, x::R10));
+        done.push(e.len());
+        e.emit_insns(&x::jcc_near(2, 0));
+        e.emit_insns(&x::cmp_rr(x::RAX, x::R11));
+        done.push(e.len());
+        e.emit_insns(&x::jcc_near(7, 0));
+        e.emit_insns(&x::sub_rmi8(x::RCX, 1));
+        e.emit_insns(&x::load_i64(x::R10, 0x80));
+        e.emit_insns(&x::load_i64(x::R11, 0xbf));
+        e.patch_u32(leader_done + 1, e.len() - leader_done - 5);
+        for branch in next_byte {
+            e.patch_u32(branch + 2, e.len() - branch - 6);
+        }
+        e.emit_insns(&x::cmp_rr(x::R8, x::R9));
+        e.emit_insns(&x::jcc_near(2, scan as i32 - e.len() as i32 - 6));
+        e.emit_insns(&x::test_rr(x::RCX, x::RCX));
+        done.push(e.len());
+        e.emit_insns(&x::jcc_near(5, 0)); // truncated sequence
+    }
+    e.emit_insns(&linux_write_stdout());
+    for branch in done {
+        e.patch_u32(branch + 2, e.len() - branch - 6);
+    }
+    e.emit_insns(&x::zero_reg(x::RAX));
+    e.emit_insns(&[0xc3]);
+    e.bytes
+}
+
+fn linux_print_int() -> Vec<u8> {
+    use crate::native_emit::x86_64::{self as x, CodeEmitter};
+    let mut e = CodeEmitter::new();
+    e.emit_insns(&x::sub_rsp_i8(32));
+    e.emit_insns(&x::lea_rsp_disp(x::RSI, 32));
+    e.emit_insns(&x::mov_rr(x::R8, x::RDI)); // retain sign
+    e.emit_insns(&x::mov_rr(x::RAX, x::RDI));
+    e.emit_insns(&x::test_rr(x::RAX, x::RAX));
+    let positive = e.len();
+    e.emit_insns(&x::jcc_near(13, 0)); // signed >= 0
+    e.emit_insns(&x::neg_reg(x::RAX)); // unsigned magnitude also handles i64::MIN
+    e.patch_u32(positive + 2, e.len() - positive - 6);
+    e.emit_insns(&x::load_i64(x::RCX, 10));
+    let digit = e.len();
+    e.emit_insns(&x::zero_reg(x::RDX));
+    e.emit_insns(&x::div_reg(x::RCX));
+    e.emit_insns(&x::add_rmi8(x::RDX, b'0'));
+    e.emit_insns(&x::sub_rmi8(x::RSI, 1));
+    e.emit_insns(&[0x88, 0x16]); // mov [rsi],dl
+    e.emit_insns(&x::test_rr(x::RAX, x::RAX));
+    e.emit_insns(&x::jcc_near(5, digit as i32 - e.len() as i32 - 6));
+    e.emit_insns(&x::test_rr(x::R8, x::R8));
+    let no_sign = e.len();
+    e.emit_insns(&x::jcc_near(13, 0));
+    e.emit_insns(&x::sub_rmi8(x::RSI, 1));
+    e.emit_insns(&[0xc6, 0x06, b'-']); // mov byte [rsi],'-'
+    e.patch_u32(no_sign + 2, e.len() - no_sign - 6);
+    e.emit_insns(&x::lea_rsp_disp(x::RDX, 32));
+    e.emit_insns(&x::sub_rr(x::RDX, x::RSI));
+    e.emit_insns(&linux_write_stdout());
+    e.emit_insns(&x::add_rmi8(x::RSP, 32));
+    e.emit_insns(&x::zero_reg(x::RAX));
+    e.emit_insns(&[0xc3]);
+    e.bytes
+}
+
+// RSI/RDX describe a nonempty byte slice. Linux write can complete partially or
+// return EINTR; permanent I/O errors end the print, as in the hosted wrappers.
+fn linux_write_stdout() -> Vec<u8> {
+    use crate::native_emit::x86_64::{self as x, CodeEmitter};
+    let mut e = CodeEmitter::new();
+    e.emit_insns(&x::load_i64(x::RDI, 1));
+    let write = e.len();
+    e.emit_insns(&x::load_i64(x::RAX, 1));
+    e.emit_insns(&[0x0f, 0x05]);
+    e.emit_insns(&x::cmp_rmi32(x::RAX, -libc::EINTR));
+    e.emit_insns(&x::jcc_near(4, write as i32 - e.len() as i32 - 6));
+    e.emit_insns(&x::test_rr(x::RAX, x::RAX));
+    let failed = e.len();
+    e.emit_insns(&x::jcc_near(14, 0)); // signed <= 0
+    e.emit_insns(&x::add_rr(x::RSI, x::RAX));
+    e.emit_insns(&x::sub_rr(x::RDX, x::RAX));
+    e.emit_insns(&x::jcc_near(5, write as i32 - e.len() as i32 - 6));
+    e.patch_u32(failed + 2, e.len() - failed - 6);
+    e.bytes
 }
 
 fn linux_str_concat() -> Vec<u8> {

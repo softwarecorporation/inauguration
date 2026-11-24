@@ -3197,6 +3197,30 @@ fn lower_builtin_call(
     {
         return Ok(false);
     }
+    if ctx.runtime == RuntimeAbi::Linux
+        && matches!(
+            target_name,
+            "print"
+                | "print-int"
+                | "print_int"
+                | crate::inrt::INRT_PRINT
+                | crate::inrt::INRT_PRINT_INT
+        )
+    {
+        if ctx.locals.contains_key(target_name) || ctx.globals.contains_key(target_name) {
+            return Err(format!(
+                "x86_64-lower: lexical call target `{target_name}` is not a native print intrinsic"
+            ));
+        }
+        crate::native_emit::stdlib_wrappers::validate_intrinsic_call(
+            target_name,
+            ctx.functions
+                .get(target_name)
+                .map(|function| (function.params.as_slice(), &function.ret)),
+            args.iter().map(|argument| scalar_expr_type(argument, ctx)),
+        )
+        .map_err(|error| format!("x86_64-lower: incompatible print {}", error.category()))?;
+    }
     if target_name == crate::inrt::INRT_STR_CONCAT {
         if x86_64::is_32bit()
             || ctx.string_layout != X86StringLayout::Instring
