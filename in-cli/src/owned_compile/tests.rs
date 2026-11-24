@@ -891,6 +891,14 @@ fn linux_native_executables_execute_bodies_and_error_paths() {
             "fn values()->[Int]{return [20,22];}fn main()->Int{let items=values();return items[0]+items[1];}",
             42,
         ),
+        (
+            "fn main()->Int{let value=str_concat(\"left\",\"右\");if value==\"left右\"{return 42;}return 7;}",
+            42,
+        ),
+        (
+            "fn main()->Int{let value=str-concat(\"\",\"payload\");if value==\"payload\"{return 42;}return 7;}",
+            42,
+        ),
     ] {
         let path = temp_path("linux-native-runtime.in");
         fs::write(&path, source).unwrap();

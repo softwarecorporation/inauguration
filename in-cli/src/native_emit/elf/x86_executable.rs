@@ -57,7 +57,7 @@ fn lower_executable(
     for symbol in &lowered.externs {
         let code = match symbol.as_str() {
             "malloc" => linux_malloc(),
-            crate::inrt::INRT_STR_CONCAT => linux_str_concat(),
+            crate::inrt::INRT_STR_CONCAT | "str-concat" | "str_concat" => linux_str_concat(),
             // SysV memcpy returns its original destination and clears DF.
             "memcpy" => vec![0x48, 0x89, 0xf8, 0x48, 0x89, 0xd1, 0xfc, 0xf3, 0xa4, 0xc3],
             "abort" => vec![
