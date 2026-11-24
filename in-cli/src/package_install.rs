@@ -803,7 +803,10 @@ fn verify_archive_checksum(path: &Path, checksum: &ArtifactChecksum) -> Result<(
                 if f.is_dir() {
                     continue;
                 }
-                files.push(f.name().to_string());
+                let name = f.name().map_err(|err| {
+                    format!("failed to read zip entry name {}: {}", path.display(), err)
+                })?;
+                files.push(name.into_owned());
             }
             files.sort();
 
@@ -1112,6 +1115,37 @@ mod tests {
         assert!(verify_archive_checksum(&path, &go).is_err());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn verify_go_module_checksum_hashes_sorted_files() {
+        use std::io::Write;
+
+        let dir = tempfile_dir("verify-go-checksum");
+        let path = dir.join("module.zip");
+        let mut archive = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        archive
+            .start_file("example.org/mod@v1.2.3/z.txt", options)
+            .unwrap();
+        archive.write_all(b"last\n").unwrap();
+        archive
+            .add_directory("example.org/mod@v1.2.3/", options)
+            .unwrap();
+        archive
+            .start_file("example.org/mod@v1.2.3/a.txt", options)
+            .unwrap();
+        archive.write_all(b"first\n").unwrap();
+        archive.finish().unwrap();
+
+        let checksum = ArtifactChecksum::GoModuleSum(
+            "h1:DLWuhv6jzSFl7OKjMctc8W2AQRgS3XWtz8qahxhxu0I=".to_string(),
+        );
+        verify_archive_checksum(&path, &checksum).unwrap();
+        let wrong_checksum = ArtifactChecksum::GoModuleSum("h1:invalid".to_string());
+        assert!(verify_archive_checksum(&path, &wrong_checksum).is_err());
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     use crate::package_manifest::parse_package_manifest_source;
