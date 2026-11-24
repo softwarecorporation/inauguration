@@ -399,10 +399,14 @@ pub(super) fn compile_jit_with_execution_state(
     let (exit_code, eval_result) = if compile_only {
         (None, None)
     } else {
+        crate::package_runtime::take_invocation_error();
         *execution_started = true;
         let raw = unsafe { rt.invoke(&resolved_entry, &[]) }.ok_or_else(|| {
             format!("jit-invocation-failed: entry `{resolved_entry}` could not be invoked")
         })?;
+        if let Some(error) = crate::package_runtime::take_invocation_error() {
+            return Err(format!("jit-package-invocation-failed: {error}"));
+        }
         if let Some(value) = rt.invocation_error() {
             return Err(format!(
                 "jit-uncaught-error: entry `{resolved_entry}` threw {value}"

@@ -418,6 +418,42 @@ pub unsafe extern "C" fn in_str_concat(a_ptr: *const u8, b_ptr: *const u8) -> *c
     }
 }
 
+/// Invoke an installed string adapter using a descriptor and a JSON argument array.
+///
+/// # Safety
+/// Both pointers must reference valid aligned, length-prefixed instrings.
+pub(crate) unsafe extern "C" fn in_package_invoke_string(
+    descriptor: *const u8,
+    arguments: *const u8,
+) -> *const u8 {
+    let result = (|| -> Result<String, String> {
+        let descriptor = unsafe { instring_from_ptr(descriptor) }
+            .ok_or_else(|| "invalid package invocation descriptor".to_string())?;
+        let arguments = unsafe { instring_from_ptr(arguments) }
+            .ok_or_else(|| "invalid package invocation arguments".to_string())?;
+        let runtime: crate::package_runtime::PackageExportRuntime =
+            serde_json::from_slice(descriptor)
+                .map_err(|err| format!("invalid package invocation descriptor: {err}"))?;
+        let strings: Vec<String> = serde_json::from_slice(arguments)
+            .map_err(|err| format!("invalid package invocation arguments: {err}"))?;
+        let arguments: Vec<_> = strings
+            .into_iter()
+            .map(crate::native_runtime::Value::String)
+            .collect();
+        match crate::package_runtime::invoke_package_export(&runtime, &arguments)? {
+            crate::native_runtime::Value::String(result) => Ok(result),
+            _ => Err("package string adapter returned a non-string value".into()),
+        }
+    })();
+    match result {
+        Ok(value) => unsafe { instring_from_bytes(value.as_bytes()) },
+        Err(error) => {
+            crate::package_runtime::record_invocation_error(error);
+            unsafe { instring_empty() }
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn in_json_stringify(text_ptr: *const u8) -> *const u8 {

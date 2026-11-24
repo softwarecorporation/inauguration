@@ -12845,3 +12845,97 @@ fn test_finalize_report() {
         Some("forbidden external tool invocation(s): rustc")
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn installed_string_adapters_execute_through_jit_with_arguments_and_errors() {
+    for (program, arguments, expected) in [
+        (
+            "exports.greet = name => { throw new Error('adapter failure'); };",
+            vec!["Ada"],
+            Err("adapter failure"),
+        ),
+        (
+            "exports.greet = name => `hello ${name}`;",
+            vec!["Ada"],
+            Ok("hello Ada"),
+        ),
+        (
+            "exports.greet = name => `hello ${name}`;",
+            vec!["Lin"],
+            Ok("hello Lin"),
+        ),
+        (
+            "exports.greet = name => `hello ${name}`;",
+            vec!["雪\n\"');process.exit(93);//\\"],
+            Ok("hello 雪\n\"');process.exit(93);//\\"),
+        ),
+        (
+            "exports.greet = (first, last) => `${last}|${first}`;",
+            vec!["left", "right"],
+            Ok("right|left"),
+        ),
+        (
+            "module . exports . greet = function(first, /* label */ last) { return `${last}|${first}`; };",
+            vec!["left", "right"],
+            Ok("right|left"),
+        ),
+        ("exports.greet = () => 'zero';", vec![], Ok("zero")),
+        (
+            "exports.greet = name => `hello ${name}`;",
+            vec![],
+            Err("expects 1 args"),
+        ),
+    ] {
+        let root = temp_path("package-jit-arguments");
+        let vendor = root.join("vendor/demo");
+        fs::create_dir_all(&vendor).unwrap();
+        fs::write(root.join("inauguration.package"), "name: package-argument\nversion: 0.1.0\ndependencies:\n  npm:demo:\n    version: path:vendor/demo\n    kind: npm\n  npm:unused:\n    version: path:vendor/unused\n    kind: npm\n").unwrap();
+        let unused = root.join("vendor/unused");
+        fs::create_dir_all(&unused).unwrap();
+        fs::write(unused.join("inauguration.adapter.json"), r#"{"exports":[{"symbol":"demo_greet","returns":"string","invoke":{"program":"echo","args":["wrong package"]}}]}"#).unwrap();
+        fs::write(
+            vendor.join("package.json"),
+            r#"{"name":"demo","version":"1.0.0","main":"index.js"}"#,
+        )
+        .unwrap();
+        fs::write(vendor.join("index.js"), program).unwrap();
+        crate::package_install::install_dependencies(
+            &root,
+            crate::package_install::InstallOptions { offline: true },
+        )
+        .unwrap();
+        let arguments = arguments
+            .iter()
+            .map(|value| serde_json::to_string(value).unwrap())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = root.join("main.in");
+        fs::write(&source, format!("package package-argument;\nmodule package-argument.main;\nuse npm:demo;\nfn main() -> String {{ return demo_greet({arguments}); }}\n")).unwrap();
+        let report = compile_owned(&default_request(
+            source,
+            CompileTarget::Jit,
+            Some("main"),
+            None,
+        ));
+        match expected {
+            Ok(value) => {
+                assert!(report.success, "{report:?}");
+                assert!(report.execution_started, "{report:?}");
+                assert_eq!(report.eval_result, Some(EvalValue::Str(value.into())));
+            }
+            Err(message) => {
+                assert!(!report.success, "{report:?}");
+                assert!(
+                    report
+                        .error
+                        .as_deref()
+                        .unwrap_or_default()
+                        .contains(message),
+                    "{report:?}"
+                );
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}

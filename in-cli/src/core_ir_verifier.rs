@@ -326,9 +326,12 @@ fn intrinsic_ret(name: &str) -> Option<IntrinsicRet> {
         return Some(*ret);
     }
     match name {
-        crate::inrt::INRT_STR_CONCAT | crate::inrt::INRT_INT_TO_STRING | "__inrt_str_substr" => {
-            Some(IntrinsicRet::String)
-        }
+        crate::package_runtime::STRING_INVOKE
+        | crate::package_runtime::STRING_QUOTE
+        | crate::package_runtime::STRING_CONCAT
+        | crate::inrt::INRT_STR_CONCAT
+        | crate::inrt::INRT_INT_TO_STRING
+        | "__inrt_str_substr" => Some(IntrinsicRet::String),
         crate::inrt::INRT_STR_EQ | crate::inrt::INRT_STR_CONTAINS => Some(IntrinsicRet::Bool),
         crate::inrt::INRT_PRINT | crate::inrt::INRT_PRINT_INT | crate::inrt::INRT_TRAP_BUILTIN => {
             Some(IntrinsicRet::Void)
@@ -423,6 +426,10 @@ pub(crate) fn intrinsic_param_types(name: &str) -> Option<&'static [Typ]> {
     }
     match name {
         crate::core_ir::COMPILER_UNREACHABLE => return Some(&[]),
+        crate::package_runtime::STRING_INVOKE | crate::package_runtime::STRING_CONCAT => {
+            return Some(&[Typ::String, Typ::String]);
+        }
+        crate::package_runtime::STRING_QUOTE => return Some(&[Typ::String]),
         crate::compiler::rust_front::integer_parse::STR_BYTE => {
             return Some(&[Typ::String, Typ::Int]);
         }

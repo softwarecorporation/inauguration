@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,8 +17,28 @@ use crate::package_manifest::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageExportRuntime {
     pub install_path: String,
+    #[serde(default)]
+    pub params: Vec<String>,
     pub returns: String,
     pub invoke: PackageInvokeSpec,
+}
+
+pub(crate) const STRING_INVOKE: &str = "__in_package_invoke_string";
+pub(crate) const STRING_QUOTE: &str = "__in_package_quote";
+pub(crate) const STRING_CONCAT: &str = "__in_package_concat";
+
+thread_local! {
+    static INVOCATION_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn take_invocation_error() -> Option<String> {
+    INVOCATION_ERROR.with(|error| error.borrow_mut().take())
+}
+
+pub(crate) fn record_invocation_error(message: String) {
+    INVOCATION_ERROR.with(|error| {
+        error.borrow_mut().get_or_insert(message);
+    });
 }
 
 pub fn collect_package_exports_for_source(
@@ -55,6 +76,7 @@ pub fn collect_package_exports_for_manifest(
                 binding.symbol.clone(),
                 PackageExportRuntime {
                     install_path: install_path.display().to_string(),
+                    params: binding.params,
                     returns: binding.returns,
                     invoke: binding.invoke,
                 },
@@ -68,11 +90,32 @@ pub fn invoke_package_export(
     runtime: &PackageExportRuntime,
     args: &[Value],
 ) -> Result<Value, String> {
-    if !args.is_empty() {
-        return Err("package export calls do not accept arguments yet".to_string());
+    if args.len() != runtime.params.len() {
+        return Err(format!(
+            "package export expects {} arguments, got {}",
+            runtime.params.len(),
+            args.len()
+        ));
+    }
+    let strings = args
+        .iter()
+        .zip(&runtime.params)
+        .map(|(argument, expected)| match (argument, expected.as_str()) {
+            (Value::String(value), "string" | "String") => Ok(value),
+            _ => Err(format!(
+                "unsupported package argument for type `{expected}`"
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut invoke = runtime.invoke.clone();
+    if !strings.is_empty() {
+        invoke.args.push(
+            serde_json::to_string(&strings)
+                .map_err(|err| format!("encode package arguments: {err}"))?,
+        );
     }
     let install_path = PathBuf::from(&runtime.install_path);
-    let output = run_invoke(&runtime.invoke, &install_path)?;
+    let output = run_invoke(&invoke, &install_path)?;
     match runtime.returns.as_str() {
         "string" => Ok(Value::String(output)),
         "int" => output
@@ -127,6 +170,77 @@ pub fn binding_return_type(binding: &PackageExportBinding) -> Option<crate::core
     }
 }
 
+pub(crate) fn binding_params(
+    binding: &PackageExportBinding,
+) -> Option<Vec<(String, crate::core_ir::Typ)>> {
+    binding
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| match ty.as_str() {
+            "string" | "String" => Some((format!("argument_{index}"), crate::core_ir::Typ::String)),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn lower_string_adapter(
+    declaration: &mut crate::core_ir::Decl,
+    runtime: &PackageExportRuntime,
+) -> Result<bool, String> {
+    use crate::core_ir::{Decl, Expr, Stmt, Typ};
+    let Decl::Function {
+        params, ret, body, ..
+    } = declaration
+    else {
+        return Ok(false);
+    };
+    if *ret != Typ::String || params.iter().any(|(_, ty)| *ty != Typ::String) {
+        return Ok(false);
+    }
+    let call = |name: &str, args| Expr::Call {
+        callee: Box::new(Expr::Ident(name.into())),
+        args,
+    };
+    let mut arguments = Expr::StringLit("[".into());
+    for (index, (name, _)) in params.iter().enumerate() {
+        if index != 0 {
+            arguments = call(STRING_CONCAT, vec![arguments, Expr::StringLit(",".into())]);
+        }
+        arguments = call(
+            STRING_CONCAT,
+            vec![
+                arguments,
+                call(STRING_QUOTE, vec![Expr::Ident(name.clone())]),
+            ],
+        );
+    }
+    arguments = call(STRING_CONCAT, vec![arguments, Expr::StringLit("]".into())]);
+    let descriptor = serde_json::to_string(runtime)
+        .map_err(|err| format!("encode package invocation: {err}"))?;
+    *body = vec![Stmt::Return(Some(call(
+        STRING_INVOKE,
+        vec![Expr::StringLit(descriptor), arguments],
+    )))];
+    Ok(true)
+}
+
+pub(crate) fn string_adapter_builtins() -> Vec<crate::core_ir::Decl> {
+    use crate::core_ir::{Decl, Typ};
+    [(STRING_INVOKE, 2), (STRING_QUOTE, 1), (STRING_CONCAT, 2)]
+        .into_iter()
+        .map(|(name, arity)| Decl::Function {
+            name: name.into(),
+            params: (0..arity)
+                .map(|index| (format!("argument_{index}"), Typ::String))
+                .collect(),
+            ret: Typ::String,
+            body: Vec::new(),
+            type_params: Vec::new(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +261,7 @@ mod tests {
         for (input, expected) in cases {
             let binding = PackageExportBinding {
                 symbol: "test_sym".to_string(),
+                params: Vec::new(),
                 returns: input.to_string(),
                 invoke: PackageInvokeSpec {
                     program: "test".to_string(),
@@ -166,6 +281,7 @@ mod tests {
     fn invokes_echo_adapter() {
         let runtime = PackageExportRuntime {
             install_path: ".".to_string(),
+            params: Vec::new(),
             returns: "string".to_string(),
             invoke: PackageInvokeSpec {
                 program: "echo".to_string(),
@@ -202,6 +318,7 @@ mod tests {
         for (return_str, expected) in cases {
             let binding = PackageExportBinding {
                 symbol: "test".to_string(),
+                params: Vec::new(),
                 returns: return_str.to_string(),
                 invoke: PackageInvokeSpec {
                     program: "true".to_string(),

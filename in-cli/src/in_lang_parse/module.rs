@@ -243,17 +243,39 @@ fn parse_in_module_from_items(
         let lock = crate::package_lock::discover_package_lock(&root.root).and_then(|lock_root| {
             crate::package_lock::load_package_lock(&lock_root.lock_path).ok()
         });
+        let mut string_adapter = false;
         for import in &surface.semantic_imports {
-            std_decls.extend(
-                crate::package_extern::package_import_bindings_for_semantic_import(
-                    import,
-                    &root.root,
-                    &manifest,
-                    lock.as_ref(),
-                )
-                .into_iter()
-                .map(|binding| binding_decl(&binding)),
+            let resolved = crate::package_manifest::resolve_semantic_imports(
+                std::slice::from_ref(import),
+                Some(&manifest),
             );
+            let mut imported_manifest = manifest.clone();
+            imported_manifest.dependencies.retain(|key, _| {
+                resolved
+                    .iter()
+                    .any(|item| item.dependency.as_ref() == Some(key))
+            });
+            let runtimes = crate::package_runtime::collect_package_exports_for_manifest(
+                &root.root,
+                &imported_manifest,
+                lock.as_ref(),
+            );
+            for binding in crate::package_extern::package_import_bindings_for_semantic_import(
+                import,
+                &root.root,
+                &manifest,
+                lock.as_ref(),
+            ) {
+                let mut declaration = binding_decl(&binding);
+                if let Some(runtime) = runtimes.get(&binding.name) {
+                    string_adapter |=
+                        crate::package_runtime::lower_string_adapter(&mut declaration, runtime)?;
+                }
+                std_decls.push(declaration);
+            }
+        }
+        if string_adapter {
+            std_decls.extend(crate::package_runtime::string_adapter_builtins());
         }
     }
     for binding in &surface.semantic_bindings {
