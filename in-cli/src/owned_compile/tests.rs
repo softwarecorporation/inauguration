@@ -3356,7 +3356,6 @@ fn cross_target_exit_stubs_reject_observable_entry_bodies() {
     )
     .unwrap();
     for target in [
-        "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu",
         "armv7-unknown-linux-gnueabihf",
         "x86_64-pc-windows-msvc",
@@ -3370,18 +3369,149 @@ fn cross_target_exit_stubs_reject_observable_entry_bodies() {
         );
         request.target_triple = Some(target.into());
         let result = super::native::compile_native(&module, "App", &request);
-        let expected = if target == "x86_64-unknown-linux-gnu" {
-            // This backend lowers bodies now, but cannot link JIT-only print wrappers.
-            "native ELF unresolved runtime import `print`"
-        } else {
-            "pure scalar exit entry"
-        };
         assert!(
-            matches!(result, Err(ref error) if error.contains(expected)),
+            matches!(result, Err(ref error) if error.contains("pure scalar exit entry")),
             "{target}: {:?}",
             result.err()
         );
         assert!(!out.exists(), "{target} wrote an incomplete artifact");
+    }
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn linux_native_print_preserves_stdout_bytes_and_exit_status() {
+    let cases = [
+        (
+            include_str!("../../../conformance/runtime/print.in"),
+            "value:42-70-9223372036854775808",
+            0,
+        ),
+        (
+            "fn main()->Int{print(\"Lλ\");print(\"\");print(\"雪\0tail\");print_int(0);print(\"|\");print-int(-1234567890);print(\"|\");print_int(9223372036854775807);print(\"R🦀\u{10ffff}\");return 37;}",
+            "Lλ雪\0tail0|-1234567890|9223372036854775807R🦀\u{10ffff}",
+            37,
+        ),
+        (
+            "fn main()->Int{__inrt_print(\"Cλ\0雪\");__inrt_print(\"\");__inrt_print_int((-9223372036854775807-1));__inrt_print(\"|\");__inrt_print_int(9223372036854775807);__inrt_print(\"|\");__inrt_print_int(0);return 19;}",
+            "Cλ\0雪-9223372036854775808|9223372036854775807|0",
+            19,
+        ),
+    ];
+    for (text, expected, exit) in cases {
+        let source = temp_path("linux-native-print.in");
+        fs::write(&source, text).unwrap();
+        for profile in [
+            crate::emit_profile::EmitProfile::Default,
+            crate::emit_profile::EmitProfile::Lean,
+            crate::emit_profile::EmitProfile::Harden,
+        ] {
+            for triple in [None, Some("x86_64-unknown-linux-gnu")] {
+                let binary = temp_path("linux-native-print");
+                let mut request = default_request(
+                    source.clone(),
+                    CompileTarget::Native,
+                    Some("main"),
+                    Some(binary.clone()),
+                );
+                request.profile = profile;
+                request.target_triple = triple.map(str::to_string);
+                let report = compile_owned(&request);
+                assert!(
+                    report.success && report.degradations.is_empty(),
+                    "{profile:?} {triple:?} {text}: {report:?}"
+                );
+                assert_eq!(&fs::read(&binary).unwrap()[..4], b"\x7fELF");
+                let output = std::process::Command::new(&binary).output().unwrap();
+                assert_eq!(output.status.code(), Some(exit), "{profile:?}: {output:?}");
+                assert_eq!(output.stdout, expected.as_bytes(), "{profile:?} {triple:?}");
+                assert!(output.stderr.is_empty(), "{output:?}");
+                fs::remove_file(binary).unwrap();
+            }
+        }
+        fs::remove_file(source).unwrap();
+    }
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn linux_native_print_keeps_user_defined_bodies() {
+    let source = temp_path("linux-native-print-override.in");
+    fs::write(
+        &source,
+        "var calls:Int=0;\nfn print(value:Int)->Int{calls+=1;return value+1;}\nfn print-int(value:String)->Int{calls+=10;return 21;}\nfn main()->Int{let a=print(20);let b=print-int(\"not an integer\");if calls!=11{return 1;}return a+b;}",
+    )
+    .unwrap();
+    for profile in [
+        crate::emit_profile::EmitProfile::Default,
+        crate::emit_profile::EmitProfile::Lean,
+        crate::emit_profile::EmitProfile::Harden,
+    ] {
+        let binary = temp_path("linux-native-print-override");
+        let mut request = default_request(
+            source.clone(),
+            CompileTarget::Native,
+            Some("main"),
+            Some(binary.clone()),
+        );
+        request.profile = profile;
+        let report = compile_owned(&request);
+        assert!(
+            report.success && report.degradations.is_empty(),
+            "{profile:?}: {report:?}"
+        );
+        let output = std::process::Command::new(&binary).output().unwrap();
+        assert_eq!(output.status.code(), Some(42), "{profile:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        fs::remove_file(binary).unwrap();
+    }
+    fs::remove_file(source).unwrap();
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn linux_native_print_rejects_incompatible_intrinsic_contracts() {
+    for text in [
+        "fn caller(print:Int)->Int{print(\"PARAM\");return 42;}fn main()->Int{return caller(0);}",
+        "var print:Int=0;fn main()->Int{print(\"GLOBAL\");return 0;}",
+        "fn main()->Int{let print=0;print(\"LOCAL\");return 0;}",
+        "fn caller(print_int:Int)->Int{print_int(42);return 0;}fn main()->Int{return caller(0);}",
+        "var print_int:Int=0;fn main()->Int{print_int(42);return 0;}",
+        "fn main()->Int{print(42);return 0;}",
+        "fn main()->Int{print-int(\"42\");return 0;}",
+        "fn main()->Int{print();return 0;}",
+        "fn main()->Int{print_int(1,2);return 0;}",
+        "fn print(value:Int)->Void;\nfn main()->Int{print(42);return 0;}",
+        "fn print-int(value:String)->Void;\nfn main()->Int{print-int(\"42\");return 0;}",
+        "fn print(value:String)->Int;\nfn main()->Int{return print(\"42\");}",
+        "fn print_int(value:Int)->Int;\nfn main()->Int{return print_int(42);}",
+        "fn main()->Int{__inrt_print(42);return 0;}",
+        "fn main()->Int{__inrt_print_int(\"42\");return 0;}",
+    ] {
+        let source = temp_path("linux-native-print-invalid.in");
+        fs::write(&source, text).unwrap();
+        for profile in [
+            crate::emit_profile::EmitProfile::Default,
+            crate::emit_profile::EmitProfile::Lean,
+            crate::emit_profile::EmitProfile::Harden,
+        ] {
+            let binary = temp_path("linux-native-print-invalid");
+            let mut request = default_request(
+                source.clone(),
+                CompileTarget::Native,
+                Some("main"),
+                Some(binary.clone()),
+            );
+            request.profile = profile;
+            let report = compile_owned(&request);
+            assert!(!report.success, "{profile:?} {text}: {report:?}");
+            assert!(
+                !binary.exists(),
+                "{profile:?} {text} wrote an invalid artifact"
+            );
+        }
+        fs::remove_file(source).unwrap();
     }
 }
 
