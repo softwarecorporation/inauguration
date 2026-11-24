@@ -891,6 +891,26 @@ fn linux_native_executables_execute_bodies_and_error_paths() {
             "fn values()->[Int]{return [20,22];}fn main()->Int{let items=values();return items[0]+items[1];}",
             42,
         ),
+        (
+            "fn main()->Int{let value=str_concat(\"left\",\"右\");if value==\"left右\"{return 42;}return 7;}",
+            42,
+        ),
+        (
+            "fn main()->Int{let value=str-concat(\"\",\"payload\");if value==\"payload\"{return 42;}return 7;}",
+            42,
+        ),
+        (
+            "fn main()->Int{let value=str_concat(\"left\",\"右\");if str_eq(value,\"left右\"){return 42;}return 7;}",
+            42,
+        ),
+        (
+            "fn main()->Int{if str-eq(\"same prefix\",\"same prefixes\"){return 7;}if str_eq(\"aa\",\"ab\"){return 8;}if str_eq(\"\",\"\"){return 42;}return 9;}",
+            42,
+        ),
+        (
+            "fn str_eq(left:String,right:String)->Bool{return false;}fn main()->Int{if str_eq(\"same\",\"same\"){return 7;}return 42;}",
+            42,
+        ),
     ] {
         let path = temp_path("linux-native-runtime.in");
         fs::write(&path, source).unwrap();
