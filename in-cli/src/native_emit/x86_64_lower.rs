@@ -3197,6 +3197,33 @@ fn lower_builtin_call(
     {
         return Ok(false);
     }
+    if ctx.runtime == RuntimeAbi::Linux
+        && matches!(target_name, "str-eq" | "str_eq" | crate::inrt::INRT_STR_EQ)
+    {
+        crate::native_emit::stdlib_wrappers::validate_intrinsic_call(
+            "str-eq",
+            ctx.functions
+                .get(target_name)
+                .map(|function| (function.params.as_slice(), &function.ret)),
+            args.iter().map(|argument| scalar_expr_type(argument, ctx)),
+        )
+        .map_err(|error| {
+            format!(
+                "x86_64-lower: incompatible string equality {}",
+                error.category()
+            )
+        })?;
+        lower_binary_expr(
+            emitter,
+            ctx,
+            target_reg,
+            "==",
+            &args[0],
+            &args[1],
+            pending_calls,
+        )?;
+        return Ok(true);
+    }
     if target_name == crate::inrt::INRT_STR_CONCAT
         || (ctx.runtime == RuntimeAbi::Linux && matches!(target_name, "str-concat" | "str_concat"))
     {
