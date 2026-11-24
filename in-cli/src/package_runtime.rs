@@ -26,17 +26,23 @@ pub struct PackageExportRuntime {
 pub(crate) const STRING_INVOKE: &str = "__in_package_invoke_string";
 pub(crate) const STRING_QUOTE: &str = "__in_package_quote";
 pub(crate) const STRING_CONCAT: &str = "__in_package_concat";
+pub(crate) const INVOCATION_FAILED: &str = "__in_package_invocation_failed";
+pub(crate) const INVOCATION_ERROR: &str = "__in_package_invocation_error";
 
 thread_local! {
-    static INVOCATION_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    static PENDING_INVOCATION_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn take_invocation_error() -> Option<String> {
-    INVOCATION_ERROR.with(|error| error.borrow_mut().take())
+    PENDING_INVOCATION_ERROR.with(|error| error.borrow_mut().take())
+}
+
+pub(crate) extern "C" fn invocation_failed() -> i64 {
+    PENDING_INVOCATION_ERROR.with(|error| i64::from(error.borrow().is_some()))
 }
 
 pub(crate) fn record_invocation_error(message: String) {
-    INVOCATION_ERROR.with(|error| {
+    PENDING_INVOCATION_ERROR.with(|error| {
         error.borrow_mut().get_or_insert(message);
     });
 }
@@ -117,7 +123,7 @@ pub fn invoke_package_export(
     let install_path = PathBuf::from(&runtime.install_path);
     let output = run_invoke(&invoke, &install_path)?;
     match runtime.returns.as_str() {
-        "string" => Ok(Value::String(output)),
+        "string" | "String" => Ok(Value::String(output)),
         "int" => output
             .trim()
             .parse::<i64>()
@@ -218,27 +224,42 @@ pub(crate) fn lower_string_adapter(
     arguments = call(STRING_CONCAT, vec![arguments, Expr::StringLit("]".into())]);
     let descriptor = serde_json::to_string(runtime)
         .map_err(|err| format!("encode package invocation: {err}"))?;
-    *body = vec![Stmt::Return(Some(call(
-        STRING_INVOKE,
-        vec![Expr::StringLit(descriptor), arguments],
-    )))];
+    *body = vec![
+        Stmt::Let(
+            "result".into(),
+            Some(Typ::String),
+            call(STRING_INVOKE, vec![Expr::StringLit(descriptor), arguments]),
+        ),
+        Stmt::If {
+            cond: call(INVOCATION_FAILED, vec![]),
+            then_body: vec![Stmt::Throw(call(INVOCATION_ERROR, vec![]))],
+            else_body: vec![],
+        },
+        Stmt::Return(Some(Expr::Ident("result".into()))),
+    ];
     Ok(true)
 }
 
 pub(crate) fn string_adapter_builtins() -> Vec<crate::core_ir::Decl> {
     use crate::core_ir::{Decl, Typ};
-    [(STRING_INVOKE, 2), (STRING_QUOTE, 1), (STRING_CONCAT, 2)]
-        .into_iter()
-        .map(|(name, arity)| Decl::Function {
-            name: name.into(),
-            params: (0..arity)
-                .map(|index| (format!("argument_{index}"), Typ::String))
-                .collect(),
-            ret: Typ::String,
-            body: Vec::new(),
-            type_params: Vec::new(),
-        })
-        .collect()
+    [
+        (STRING_INVOKE, 2, Typ::String),
+        (STRING_QUOTE, 1, Typ::String),
+        (STRING_CONCAT, 2, Typ::String),
+        (INVOCATION_FAILED, 0, Typ::Bool),
+        (INVOCATION_ERROR, 0, Typ::String),
+    ]
+    .into_iter()
+    .map(|(name, arity, ret)| Decl::Function {
+        name: name.into(),
+        params: (0..arity)
+            .map(|index| (format!("argument_{index}"), Typ::String))
+            .collect(),
+        ret,
+        body: Vec::new(),
+        type_params: Vec::new(),
+    })
+    .collect()
 }
 
 #[cfg(test)]

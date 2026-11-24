@@ -454,6 +454,13 @@ pub(crate) unsafe extern "C" fn in_package_invoke_string(
     }
 }
 
+pub(crate) unsafe extern "C" fn in_package_invocation_error() -> *const u8 {
+    let error = crate::package_runtime::take_invocation_error()
+        .map(|error| format!("jit-package-invocation-failed: {error}"))
+        .unwrap_or_default();
+    unsafe { instring_from_bytes(error.as_bytes()) }
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn in_json_stringify(text_ptr: *const u8) -> *const u8 {

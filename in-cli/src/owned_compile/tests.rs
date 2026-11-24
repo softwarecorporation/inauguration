@@ -12882,6 +12882,16 @@ fn installed_string_adapters_execute_through_jit_with_arguments_and_errors() {
         ),
         ("exports.greet = () => 'zero';", vec![], Ok("zero")),
         (
+            "exports.greet = (name = 'world') => 'hello ' + name;",
+            vec![],
+            Ok("hello world"),
+        ),
+        (
+            "function greet() { return 'hello world'; } exports.greet = greet;",
+            vec![],
+            Ok("hello world"),
+        ),
+        (
             "exports.greet = name => `hello ${name}`;",
             vec![],
             Err("expects 1 args"),
@@ -12938,4 +12948,123 @@ fn installed_string_adapters_execute_through_jit_with_arguments_and_errors() {
         }
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn installed_string_adapters_merge_imports_and_accept_string_metadata() {
+    let root = temp_path("package-jit-imports");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("inauguration.package"), "name: package-imports\nversion: 0.1.0\ndependencies:\n  npm:demo:\n    version: path:vendor/demo\n    kind: npm\n  npm:other:\n    version: path:vendor/other\n    kind: npm\n").unwrap();
+    for (name, params, program) in [
+        (
+            "demo",
+            vec!["String"],
+            "process.stdout.write('left ' + JSON.parse(process.argv[1])[0]);",
+        ),
+        ("other", vec![], "process.stdout.write('right');"),
+    ] {
+        let vendor = root.join("vendor").join(name);
+        fs::create_dir_all(&vendor).unwrap();
+        fs::write(vendor.join("inauguration.adapter.json"), serde_json::to_string(&serde_json::json!({"exports":[{"symbol":format!("{name}_greet"),"params":params,"returns":"String","invoke":{"program":"node","args":["-e",program]}}]})).unwrap()).unwrap();
+    }
+    crate::package_install::install_dependencies(
+        &root,
+        crate::package_install::InstallOptions { offline: true },
+    )
+    .unwrap();
+    fs::write(
+        root.join("helper.in"),
+        "use npm:other;\nfn helper()->String{return other_greet();}",
+    )
+    .unwrap();
+    let source = root.join("main.in");
+    fs::write(
+        &source,
+        "import \"./helper.in\";\nuse npm:demo;\nfn main()->String{return demo_greet(helper());}",
+    )
+    .unwrap();
+    let report = compile_owned(&default_request(
+        source,
+        CompileTarget::Jit,
+        Some("main"),
+        None,
+    ));
+    assert!(report.success && report.execution_started, "{report:?}");
+    assert_eq!(
+        report.eval_result,
+        Some(EvalValue::Str("left right".into()))
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn installed_string_adapter_failure_stops_dependent_effects() {
+    let root = temp_path("package-jit-failure-effects");
+    let vendor = root.join("vendor/demo");
+    fs::create_dir_all(&vendor).unwrap();
+    fs::write(root.join("inauguration.package"), "name: package-failure\nversion: 0.1.0\ndependencies:\n  npm:demo:\n    version: path:vendor/demo\n    kind: npm\n").unwrap();
+    fs::write(vendor.join("inauguration.adapter.json"), serde_json::to_string(&serde_json::json!({"exports":[
+        {"symbol":"fail","returns":"string","invoke":{"program":"node","args":["-e","throw new Error('first failed');"]}},
+        {"symbol":"consume","params":["string"],"returns":"string","invoke":{"program":"node","args":["-e","require('fs').writeFileSync('continued.txt', process.argv[1]);process.stdout.write('continued');"]}}
+    ]})).unwrap()).unwrap();
+    crate::package_install::install_dependencies(
+        &root,
+        crate::package_install::InstallOptions { offline: true },
+    )
+    .unwrap();
+    let source = root.join("main.in");
+    let marker = root.join("jit-continued.txt");
+    fs::write(&source, format!("use npm:demo;\nfn consume_local(value:String)->String{{write-file({},value);return consume(value);}}\nfn main()->String{{return consume_local(fail());}}", serde_json::to_string(&marker).unwrap())).unwrap();
+    let runtime = crate::package_runtime::collect_package_exports_for_source(&source);
+    let package_marker = PathBuf::from(&runtime["consume"].install_path).join("continued.txt");
+    let report = compile_owned(&default_request(
+        source.clone(),
+        CompileTarget::Jit,
+        Some("main"),
+        None,
+    ));
+    assert!(!report.success, "{report:?}");
+    assert!(
+        report
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("first failed"),
+        "{report:?}"
+    );
+    assert!(
+        !marker.exists(),
+        "dependent JIT function executed after failure"
+    );
+    assert!(
+        !package_marker.exists(),
+        "dependent package executed after failure"
+    );
+    fs::write(&source, format!("use npm:demo;\nfn consume_local(value:String)->String{{write-file({},value);return consume(value);}}\nfn main()->String{{try{{return consume_local(fail());}}catch _{{return \"caught\";}}}}", serde_json::to_string(&marker).unwrap())).unwrap();
+    let report = compile_owned(&default_request(
+        source.clone(),
+        CompileTarget::Jit,
+        Some("main"),
+        None,
+    ));
+    assert!(report.success && report.execution_started, "{report:?}");
+    assert_eq!(report.eval_result, Some(EvalValue::Str("caught".into())));
+    assert!(!marker.exists());
+    assert!(!package_marker.exists());
+    fs::write(
+        &source,
+        "use npm:demo;\nfn main()->String{return __in_package_invocation_error();}",
+    )
+    .unwrap();
+    let report = compile_owned(&default_request(
+        source,
+        CompileTarget::Jit,
+        Some("main"),
+        None,
+    ));
+    assert!(report.success && report.execution_started, "{report:?}");
+    assert_eq!(report.eval_result, Some(EvalValue::Str(String::new())));
+    fs::remove_dir_all(root).unwrap();
 }

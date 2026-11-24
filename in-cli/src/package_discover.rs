@@ -146,9 +146,7 @@ fn npm_greeting_arity(path: &Path) -> Result<usize, String> {
             .child_by_field_name("right")
             .ok_or_else(|| "npm greeting export has no function".to_string())?;
         if !matches!(function.kind(), "arrow_function" | "function_expression") || arity.is_some() {
-            return Err(
-                "npm greeting requires one direct function export or an explicit adapter".into(),
-            );
+            return Ok(0);
         }
         if function.child_by_field_name("parameter").is_some() {
             arity = Some(1);
@@ -158,18 +156,20 @@ fn npm_greeting_arity(path: &Path) -> Result<usize, String> {
                 .named_children(&mut cursor)
                 .filter(|parameter| parameter.kind() != "comment")
                 .collect();
-            if parameters
-                .iter()
-                .any(|parameter| parameter.kind() != "identifier")
-            {
-                return Err(
-                    "npm greeting defaults, rest and destructuring require an explicit adapter"
-                        .into(),
-                );
-            }
-            arity = Some(parameters.len());
+            arity = Some(
+                if parameters
+                    .iter()
+                    .any(|parameter| parameter.kind() != "identifier")
+                {
+                    // Preserve the legacy zero-argument adapter when richer
+                    // parameter contracts cannot be inferred without execution.
+                    0
+                } else {
+                    parameters.len()
+                },
+            );
         } else {
-            return Err("npm greeting requires explicit function parameters".into());
+            return Ok(0);
         }
     }
     Ok(arity.unwrap_or(0))

@@ -24,6 +24,7 @@ struct ParsedInModule {
     module: UnifiedModule,
     pending_globals: HashSet<String>,
     empty_brace_fns: HashSet<String>,
+    string_adapter: bool,
 }
 
 fn parse_module_from_blocks<'a>(
@@ -187,6 +188,7 @@ fn parse_module_from_blocks<'a>(
         module: UnifiedModule::new(decls),
         pending_globals,
         empty_brace_fns,
+        string_adapter: false,
     })
 }
 
@@ -223,6 +225,7 @@ fn parse_in_module_from_items(
         mut module,
         pending_globals,
         empty_brace_fns,
+        mut string_adapter,
     } = parse_module_from_blocks(
         items.iter().filter(|(_, text)| is_core_decl_item(text)),
         counts,
@@ -243,7 +246,6 @@ fn parse_in_module_from_items(
         let lock = crate::package_lock::discover_package_lock(&root.root).and_then(|lock_root| {
             crate::package_lock::load_package_lock(&lock_root.lock_path).ok()
         });
-        let mut string_adapter = false;
         for import in &surface.semantic_imports {
             let resolved = crate::package_manifest::resolve_semantic_imports(
                 std::slice::from_ref(import),
@@ -274,9 +276,6 @@ fn parse_in_module_from_items(
                 std_decls.push(declaration);
             }
         }
-        if string_adapter {
-            std_decls.extend(crate::package_runtime::string_adapter_builtins());
-        }
     }
     for binding in &surface.semantic_bindings {
         std_decls.push(Decl::Function {
@@ -293,6 +292,7 @@ fn parse_in_module_from_items(
         module,
         pending_globals,
         empty_brace_fns,
+        string_adapter,
     })
 }
 
@@ -302,7 +302,13 @@ fn finalize_in_module(parsed: ParsedInModule, require_main: bool) -> Result<Unif
         mut module,
         mut pending_globals,
         empty_brace_fns,
+        string_adapter,
     } = parsed;
+    if string_adapter {
+        module
+            .decls
+            .extend(crate::package_runtime::string_adapter_builtins());
+    }
     if module
         .decls
         .iter()
@@ -598,6 +604,7 @@ fn parse_in_file_with_imports(path: &Path) -> Result<ParsedInModule, String> {
     let mut decls = Vec::new();
     let mut pending_globals = HashSet::new();
     let mut empty_brace_fns = HashSet::new();
+    let mut string_adapter = false;
     for parsed in files
         .into_iter()
         .map(|(_, parsed)| parsed)
@@ -606,11 +613,13 @@ fn parse_in_file_with_imports(path: &Path) -> Result<ParsedInModule, String> {
         decls.extend(parsed.module.decls);
         pending_globals.extend(parsed.pending_globals);
         empty_brace_fns.extend(parsed.empty_brace_fns);
+        string_adapter |= parsed.string_adapter;
     }
     Ok(ParsedInModule {
         module: UnifiedModule::with_identity(decls, identity),
         pending_globals,
         empty_brace_fns,
+        string_adapter,
     })
 }
 
